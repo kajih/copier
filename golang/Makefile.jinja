@@ -1,0 +1,59 @@
+.PHONY: build clean test help default tidy package tag update-version
+
+BIN_NAME={{ module_name }}  # Set your binary name
+VERSION_FILE=version/version.go
+
+# Dynamically extract version from version/version.go
+VERSION := $(shell grep 'var Version ' version/version.go | sed -E 's/.*"(.+)"$$/\1/')
+GIT_COMMIT := $(shell git rev-parse HEAD)
+GIT_DIRTY := $(shell test -n "`git status --porcelain`" && echo "+CHANGES" || true)
+BUILD_DATE := $(shell date '+%Y-%m-%d-%H:%M:%S')
+
+default: test
+
+help:
+	@echo 'Management commands:'
+	@echo 'Usage:'
+	@echo '    make update-version  Update BuildDate in version.go.'
+	@echo '    make build           Compile the project.'
+	@echo '    make tidy            Fetch dependencies.'
+	@echo '    make package         Build final Docker image.'
+	@echo '    make tag             Tag Docker image with latest, git commit, and version.'
+	@echo '    make test            Run tests.'
+	@echo '    make clean           Clean up the binary.'
+
+#Task to update version/version.go with new BuildDate
+update-version:
+	@echo "Updating BuildDate in $(VERSION_FILE) to ${BUILD_DATE}..."
+	sed -i.bak -E 's|(var BuildDate = ").*(")|\1${BUILD_DATE}\2|' $(VERSION_FILE)
+	sed -i.bak -E 's|(var GitCommit = ").*(")|\1${GIT_COMMIT}\2|' $(VERSION_FILE)
+	rm -f $(VERSION_FILE).bak
+
+build:
+	@echo "Building ${BIN_NAME} (Version: ${VERSION}, Commit: ${GIT_COMMIT}${GIT_DIRTY}, Build Date: ${BUILD_DATE})"
+	go build -ldflags "\
+		-X '{{ go_module }}/version.Version=${VERSION}' \
+		-X '{{ go_module }}/version.GitCommit=${GIT_COMMIT}${GIT_DIRTY}' \
+		-X '{{ go_module }}/version.BuildDate=${BUILD_DATE}'" \
+		-o bin/${BIN_NAME}
+
+tidy:
+	@echo "Fetching dependencies..."
+	go mod tidy
+
+clean:
+	@echo "Cleaning up..."
+	@test ! -e bin/${BIN_NAME} || rm bin/${BIN_NAME}
+
+test:
+	@echo "Running tests..."
+	go test ./...
+
+package:
+	@echo "Building Docker image..."
+	docker build -t ${BIN_NAME}:${VERSION} .
+
+tag:
+	@echo "Tagging Docker image..."
+	docker tag ${BIN_NAME}:${VERSION} ${BIN_NAME}:latest
+	docker tag ${BIN_NAME}:${VERSION} ${BIN_NAME}:${GIT_COMMIT}
